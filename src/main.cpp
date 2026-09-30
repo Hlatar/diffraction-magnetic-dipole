@@ -5,19 +5,32 @@
 using namespace diffr;
 
 int main() {
-    Params     p;
-    Generatrix gen(p);
-    Green      gr(p);
-    Source     src(p, gen);
+    // --- настройка параметров (синглтон) ---
+    auto& p = Params::get();
+    // p.omega = ...;
+    // p.mu0   = ...;
+    // p.eps0  = ...;
+    // p.k0    = ...;
+    // p.k1    = ...;
+    // p.km    = ...;
+    // p.k1_gr = ...;
+    // p.sigma_g = ...;
+    // p.z_s   = ...;
+    // p.t_min = ...;
+    // p.t_max = ...;
+
+    Generatrix gen;
+    Green      gr(64);
+    Source     src;
 
     // --- металлический слой ---
-    CollocationSolver solver_m(p, gen, gr, src, 32,
+    CollocationSolver solver_m(gen, gr, src, 32,
                                CollocationSolver::Mode::Metal);
     std::vector<cd> sol_m = solver_m.solve();
     std::cout << "metal: " << sol_m.size() << " unknowns\n";
 
     // --- слой графена ---
-    CollocationSolver solver_g(p, gen, gr, src, 32,
+    CollocationSolver solver_g(gen, gr, src, 32,
                                CollocationSolver::Mode::Graphene);
     std::vector<cd> sol_g = solver_g.solve();
     std::cout << "graphene: " << sol_g.size() << " unknowns\n";

@@ -9,16 +9,16 @@ namespace diffr {
 using cd = std::complex<double>;
 
 // ============================================================
-// 1. ПАРАМЕТРЫ
+// 1. ПАРАМЕТРЫ (синглтон — один экземпляр на всю программу)
 // ============================================================
 struct Params {
     double omega = 0.0;
     double mu0   = 0.0;
     double eps0  = 0.0;
 
-    cd k0 = 0.0;
-    cd k1 = 0.0;
-    cd km = 0.0;
+    cd k0    = 0.0;
+    cd k1    = 0.0;
+    cd km    = 0.0;
     cd k1_gr = 0.0;
 
     cd     sigma_g = 0.0;
@@ -26,8 +26,20 @@ struct Params {
 
     double a     = 1.0;
     double b     = 1.0;
-    double t_min = 0.0; // t - parameter
+    double t_min = 0.0; // параметр t
     double t_max = 0.0;
+
+    // Единственная точка доступа
+    static Params& get() {
+        static Params p;
+        return p;
+    }
+
+    Params(const Params&)            = delete;
+    Params& operator=(const Params&) = delete;
+
+private:
+    Params() = default;
 };
 
 // ============================================================
@@ -35,14 +47,16 @@ struct Params {
 // ============================================================
 class Generatrix {
 public:
-    explicit Generatrix(const Params& p);
+    Generatrix() = default;
 
-    void   point(double t, double& rho, double& z) const; // передавать только t остальное высчитывать.
+    // На входе только t. rho и z вычисляются внутри.
+    void   point(double t, double& rho, double& z) const;
+
+    // dl/dt = sqrt(rho'(t)^2 + z'(t)^2)
     double dl(double t) const;
-    void   normal(double t, double& n_rho, double& n_z) const;
 
-private:
-    const Params& p_;
+    // Единичная внешняя нормаль в плоскости (rho, z)
+    void   normal(double t, double& n_rho, double& n_z) const;
 };
 
 // ============================================================
@@ -50,18 +64,17 @@ private:
 // ============================================================
 class Green {
 public:
-    Green(const Params& p, int n_phi = 64); // параметры сделать глобальными чтобы не передавать.
+    explicit Green(int n_phi = 64);
 
-    cd G_value(double t, double tm, cd k) const;
-    cd dG_drho(double t, double tm, cd k) const;
-    cd dG_dz  (double t, double tm, cd k) const;
-    cd dG_dn  (double t, double tm, cd k, const Generatrix& gen) const;
+    cd G_value (double t, double tm, cd k) const;
+    cd dG_drho (double t, double tm, cd k) const;
+    cd dG_dz   (double t, double tm, cd k) const;
+    cd dG_dn   (double t, double tm, cd k, const Generatrix& gen) const;
 
 private:
-    const Params& p_;
     int n_phi_;
-    std::vector<double> phi_;  // лучше массивы
-    std::vector<double> w_phi_;
+    std::vector<double> phi_;   // узлы по phi
+    std::vector<double> w_phi_; // веса по phi
 };
 
 // ============================================================
@@ -69,20 +82,31 @@ private:
 // ============================================================
 class Source {
 public:
-    Source(const Params& p, const Generatrix& gen);
+    Source() = default;
 
     cd u0(double t) const;
     cd du0_dn(double t) const;
-
-private:
-    const Params&     p_;
-    const Generatrix& gen_;
 };
 
 // ============================================================
-// 5. КВАДРАТУРА ГАУССА-ЛЕЖАНДРА
+// 5. КВАДРАТУРЫ
 // ============================================================
-template <typename F>  // взять готовый из gsl , начать лучше с методом трапеции (оставить)
+
+// --- 5.1. Метод трапеций (основной) ---
+template <typename F>
+cd trap_integral(F f, double tL, double tR, int n = 64) {
+    double h = (tR - tL) / n;
+    cd sum = 0.0;
+    for (int i = 0; i < n; ++i) {
+        double t0 = tL + i * h;
+        double t1 = tL + (i + 1) * h;
+        sum += 0.5 * (f(t0) + f(t1)) * h;
+    }
+    return sum;
+}
+
+// --- 5.2. Гаусс-Лежандра (альтернатива) ---
+template <typename F>
 cd gauss_integral(F f, double tL, double tR, int n = 8) {
     static const double x[8] = {
         -0.9602898564975363, -0.7966664774136267,
@@ -98,7 +122,7 @@ cd gauss_integral(F f, double tL, double tR, int n = 8) {
     };
     cd sum = 0.0;
     for (int i = 0; i < n; ++i) {
-        double t = 0.5*(tR - tL)*x[i] + 0.5*(tR + tL);
+        double t = 0.5 * (tR - tL) * x[i] + 0.5 * (tR + tL);
         sum += w[i] * f(t);
     }
     return 0.5 * (tR - tL) * sum;
@@ -111,17 +135,16 @@ class CollocationSolver {
 public:
     enum class Mode { Metal, Graphene };
 
-    CollocationSolver(const Params& p,
-                      const Generatrix& gen,
-                      const Green& gr,
-                      const Source& src,
-                      int N = 32,
+    CollocationSolver(const Generatrix& gen,
+                      const Green&      gr,
+                      const Source&     src,
+                      int  N    = 32,
                       Mode mode = Mode::Metal);
 
     std::vector<cd> solve() const;
 
     const std::vector<double>& collocation_points() const { return t_coll_; }
-    int                        unknowns_per_point() const {
+    int unknowns_per_point() const {
         return mode_ == Mode::Metal ? 2 : 4;
     }
 
@@ -130,9 +153,8 @@ private:
                std::vector<cd>& A) const;
 
     void assemble(std::vector<cd>& M, int& size) const;
-    void rhs(std::vector<cd>& b) const;
+    void rhs     (std::vector<cd>& b) const;
 
-    const Params&     p_;
     const Generatrix& gen_;
     const Green&      gr_;
     const Source&     src_;
@@ -148,9 +170,8 @@ private:
 // ============================================================
 cd field_at_point(double rho, double z,
                   const std::vector<cd>& sol,
-                  const Params& p,
                   const Generatrix& gen,
-                  const Green& gr,
-                  const Source& src);
+                  const Green&      gr,
+                  const Source&     src);
 
 } // namespace diffr
